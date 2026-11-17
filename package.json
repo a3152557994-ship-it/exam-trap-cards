@@ -1,0 +1,11 @@
+{
+  "name": "exam-trap-cards",
+  "version": "1.0.0",
+  "description": "2026 Civil Service & Teacher Qualification High-Frequency Exam Trap Flashcards & Mistake Notebook (#15)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "sync": "cp src/trap-cards-engine.mjs docs/trap-cards-engine.js"
+  }
+}
