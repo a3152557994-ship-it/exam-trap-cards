@@ -1,7 +1,4 @@
 import {
-  PRODUCT_SLUG,
-  FREE_QUESTION_LIMIT,
-  ORDER_CHANNELS,
   MODULES,
   QUESTIONS,
   createInitialStudyState,
@@ -11,16 +8,13 @@ import {
   recordEbbinghausReview,
   getEbbinghausQueue,
   exportMistakeReportMarkdown,
-  verifyLicenseToken,
 } from "./trap-cards-engine.js";
 
 const STORAGE_STATE_KEY = "opc_exam_trap_study_v1";
-const STORAGE_LICENSE_KEY = "opc_exam_trap_license_v1";
 
 let studyState = loadStudyState();
-let isUnlocked = Boolean(globalThis.__OPC_OFFLINE_UNLOCKED__);
-let licenseEmail = isUnlocked ? "离线完整版授权买家" : "";
-let activeMode = "practice"; // "practice" | "mistakes" | "ebbinghaus" | "cram"
+let isUnlocked = true;
+let activeMode = "practice";
 let activeModule = "all";
 let currentCardPos = 0;
 let revealedCramSet = new Set();
@@ -42,9 +36,7 @@ function loadStudyState() {
 function saveStudyState() {
   try {
     localStorage.setItem(STORAGE_STATE_KEY, JSON.stringify(studyState));
-  } catch {
-    // Ignore storage quota errors in private mode
-  }
+  } catch {}
 }
 
 function escapeHtml(str) {
@@ -53,21 +45,6 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-async function restoreSavedLicense() {
-  if (isUnlocked) return;
-  try {
-    const saved = localStorage.getItem(STORAGE_LICENSE_KEY);
-    if (!saved) return;
-    const res = await verifyLicenseToken(saved, { expectedProduct: PRODUCT_SLUG });
-    if (res.valid) {
-      isUnlocked = true;
-      licenseEmail = res.payload?.e || "Pro已解锁";
-    }
-  } catch {
-    // Ignore
-  }
 }
 
 function getDeck() {
@@ -80,35 +57,18 @@ function renderStatsAndTabs() {
   const accuracy = attemptedIds.length > 0 ? `${Math.round((correctCount / attemptedIds.length) * 100)}%` : "--";
   const queue = getEbbinghausQueue(studyState);
 
-  document.getElementById("statProgress").textContent = `${attemptedIds.length}/${ isUnlocked ? QUESTIONS.length : FREE_QUESTION_LIMIT }`;
+  document.getElementById("statProgress").textContent = `${attemptedIds.length}/${QUESTIONS.length}`;
   document.getElementById("statAccuracy").textContent = accuracy;
   document.getElementById("statMistakes").textContent = String(queue.totalMistakes);
   document.getElementById("statDue").textContent = String(queue.due.length);
 
   const dueBadge = document.getElementById("dueBadge");
-  if (queue.due.length > 0) {
-    dueBadge.hidden = false;
-    dueBadge.textContent = String(queue.due.length);
-  } else {
-    dueBadge.hidden = true;
-  }
+  dueBadge.hidden = queue.due.length === 0;
+  if (queue.due.length > 0) dueBadge.textContent = String(queue.due.length);
 
   const mistBadge = document.getElementById("mistakeBadge");
-  if (queue.totalMistakes > 0) {
-    mistBadge.hidden = false;
-    mistBadge.textContent = String(queue.totalMistakes);
-  } else {
-    mistBadge.hidden = true;
-  }
-
-  const unlockBtn = document.getElementById("btnOpenUnlock");
-  if (isUnlocked) {
-    unlockBtn.textContent = "✓ 全40题已解锁";
-    unlockBtn.classList.add("is-unlocked");
-  } else {
-    unlockBtn.textContent = "解锁全40题 · ¥19.9";
-    unlockBtn.classList.remove("is-unlocked");
-  }
+  mistBadge.hidden = queue.totalMistakes === 0;
+  if (queue.totalMistakes > 0) mistBadge.textContent = String(queue.totalMistakes);
 
   document.querySelectorAll(".mode-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === activeMode);
@@ -160,31 +120,6 @@ function renderPracticeView(stageEl) {
 
   if (!card) {
     stageEl.innerHTML = `<div class="list-card">暂无题目</div>`;
-    return;
-  }
-
-  if (card.locked) {
-    stageEl.innerHTML = `
-      <div class="lock-gate-card" id="swipeSurface">
-        <div style="font-size:12px;color:#94a3b8;margin-bottom:6px;">第 ${currentCardPos + 1} / ${deck.length} 题 · ${escapeHtml(card.examTag)}</div>
-        <h2 class="lock-gate-title">🔒 已刷完前 ${FREE_QUESTION_LIMIT} 道免费高频陷阱体验卡</h2>
-        <p class="lock-gate-desc">
-          本题属于完整版深度易错库（考场错选率 <strong>${escapeHtml(card.errorRate)}</strong>）。<br>
-          解锁完整版即可畅刷全部 <strong>40 道真题级高频挖坑题 + 40 条 5 秒秒杀口诀 + 个人错题本一键导出打印</strong>！
-        </p>
-        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-          <button type="button" class="cta-primary-btn" id="gateUnlockBtn">输入激活码 / ¥19.9 自动秒发解锁</button>
-          <button type="button" class="cta-secondary-btn" id="gateBackFreeBtn">回到第 1 题重刷</button>
-        </div>
-        <p class="swipe-hint">支持左右滑动切换卡片 · 键盘 ← / → 翻页</p>
-      </div>
-    `;
-    document.getElementById("gateUnlockBtn").addEventListener("click", openUnlockModal);
-    document.getElementById("gateBackFreeBtn").addEventListener("click", () => {
-      currentCardPos = 0;
-      renderAll();
-    });
-    attachSwipeHandlers(document.getElementById("swipeSurface"));
     return;
   }
 
@@ -242,7 +177,7 @@ function renderPracticeView(stageEl) {
       <h2 class="q-stem">${escapeHtml(card.stem)}</h2>
       <div class="options-list">${optionsHtml}</div>
       ${analysisHtml}
-      <div class="swipe-hint">手指左右滑卡切题 · 点选选项秒判分并自动建立艾宾浩斯复习</div>
+      <div class="swipe-hint">手指左右滑卡切题 · 全部 40 道高频陷阱已免费解锁</div>
     </article>
   `;
 
@@ -251,7 +186,7 @@ function renderPracticeView(stageEl) {
       const res = submitAnswer(studyState, {
         questionId: card.id,
         choice: btn.dataset.choice,
-        unlocked: isUnlocked,
+        unlocked: true,
       });
       if (res.allowed) {
         studyState = res.state;
@@ -272,17 +207,16 @@ function renderPracticeView(stageEl) {
 
 function renderMistakesView(stageEl) {
   document.getElementById("bottomNav").style.display = "none";
-  const mistakeIds = Object.keys(studyState.mistakes);
   const items = QUESTIONS.filter((q) => Boolean(studyState.mistakes[q.id]));
 
   const headerActions = `
     <div class="list-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
       <div>
         <div style="font-weight:800;font-size:15px;">📒 个人高频陷阱错题本（${items.length} 题）</div>
-        <div style="font-size:12px;color:#94a3b8;">答错题目自动收录，考前一键导出 Markdown / 打印背诵单</div>
+        <div style="font-size:12px;color:#94a3b8;">答错题目自动收录，考前免费导出 Markdown / 打印背诵单</div>
       </div>
       <button type="button" class="cta-primary-btn" id="btnExportMistakes" style="padding:8px 14px;font-size:12.5px;">
-        ${isUnlocked ? "📥 导出错题与口诀 (.md)" : "🔒 导出错题本 (需激活码)"}
+        📥 免费导出错题与口诀 (.md)
       </button>
     </div>
   `;
@@ -318,10 +252,6 @@ function renderMistakesView(stageEl) {
   }
 
   document.getElementById("btnExportMistakes").addEventListener("click", () => {
-    if (!isUnlocked) {
-      openUnlockModal();
-      return;
-    }
     const exp = exportMistakeReportMarkdown(studyState, { unlocked: true });
     if (exp.allowed) {
       const blob = new Blob([exp.markdown], { type: "text/markdown;charset=utf-8" });
@@ -414,8 +344,8 @@ function renderCramView(stageEl) {
   const topBanner = `
     <div class="list-card" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
       <div>
-        <div style="font-weight:800;font-size:15px;">⚡ 考前 15 分钟秒杀口诀遮罩背诵卡</div>
-        <div style="font-size:12px;color:#94a3b8;">点击模糊口诀条即可翻开自测记忆（免费开放前 ${FREE_QUESTION_LIMIT} 条，完整版全 40 条）</div>
+        <div style="font-weight:800;font-size:15px;">⚡ 考前 15 分钟秒杀口诀遮罩背诵卡（全 40 条免费全开）</div>
+        <div style="font-size:12px;color:#94a3b8;">点击模糊口诀条即可翻开自测记忆</div>
       </div>
       <button type="button" class="cta-secondary-btn" id="btnToggleAllCram" style="padding:6px 12px;font-size:12px;">
         ${revealedCramSet.size > 0 ? "全部遮住自测" : "全部翻开速读"}
@@ -425,17 +355,6 @@ function renderCramView(stageEl) {
 
   const cardsHtml = deck
     .map((q) => {
-      if (q.locked) {
-        return `
-          <div class="list-card" style="opacity:0.82;">
-            <div class="list-card-head">
-              <span class="q-tag-pill">${escapeHtml(q.id)} · ${escapeHtml(q.examTag)}</span>
-              <span class="q-err-pill">🔒 Pro完整版口诀</span>
-            </div>
-            <div style="font-size:13px;color:#94a3b8;">解锁 ¥19.9 完整版即可查看全部 40 条高频陷阱秒杀口诀与离线打印包</div>
-          </div>
-        `;
-      }
       const revealed = revealedCramSet.has(q.id);
       return `
         <div class="list-card">
@@ -457,7 +376,7 @@ function renderCramView(stageEl) {
     if (revealedCramSet.size > 0) {
       revealedCramSet.clear();
     } else {
-      deck.filter((q) => !q.locked).forEach((q) => revealedCramSet.add(q.id));
+      deck.forEach((q) => revealedCramSet.add(q.id));
     }
     renderAll();
   });
@@ -504,19 +423,6 @@ function attachSwipeHandlers(el) {
   );
 }
 
-function openUnlockModal() {
-  const modal = document.getElementById("unlockModal");
-  modal.hidden = false;
-  const statusEl = document.getElementById("licenseStatusMsg");
-  statusEl.textContent = isUnlocked
-    ? `当前已解锁完整版（授权：${licenseEmail}）`
-    : "输入 OPC1. 开头的激活码，浏览器本地毫秒级 Ed25519 公钥验签即刻解锁全 40 题与错题导出。";
-}
-
-function closeUnlockModal() {
-  document.getElementById("unlockModal").hidden = true;
-}
-
 function renderAll() {
   renderStatsAndTabs();
   renderModuleFilter();
@@ -527,9 +433,7 @@ function renderAll() {
   else renderCramView(stageEl);
 }
 
-async function init() {
-  await restoreSavedLicense();
-
+function init() {
   document.querySelectorAll(".mode-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       activeMode = btn.dataset.mode;
@@ -555,51 +459,23 @@ async function init() {
   document.getElementById("btnQuickStar").addEventListener("click", () => {
     const deck = getDeck();
     const card = deck[currentCardPos];
-    if (card && !card.locked) {
+    if (card) {
       studyState = toggleMistakeBookmark(studyState, { questionId: card.id });
       saveStudyState();
       renderAll();
     }
   });
 
-  document.getElementById("btnOpenUnlock").addEventListener("click", openUnlockModal);
-  document.getElementById("btnCloseModal").addEventListener("click", closeUnlockModal);
-  document.getElementById("unlockModal").addEventListener("click", (e) => {
-    if (e.target.id === "unlockModal") closeUnlockModal();
-  });
-
-  document.getElementById("btnVerifyToken").addEventListener("click", async () => {
-    const input = document.getElementById("licenseTokenInput").value.trim();
-    const statusEl = document.getElementById("licenseStatusMsg");
-    const res = await verifyLicenseToken(input, { expectedProduct: PRODUCT_SLUG });
-    if (res.valid) {
-      isUnlocked = true;
-      licenseEmail = res.payload?.e || "Pro用户";
-      try {
-        localStorage.setItem(STORAGE_LICENSE_KEY, input);
-      } catch {}
-      statusEl.style.color = "#34d399";
-      statusEl.textContent = `✅ Ed25519 验签通过！已解锁全部 40 道真题级陷阱卡与错题导出（${licenseEmail}）`;
-      renderAll();
-      setTimeout(closeUnlockModal, 900);
-    } else {
-      statusEl.style.color = "#f87171";
-      statusEl.textContent = `❌ 验签未通过：${res.message || res.reason}`;
-    }
-  });
-
-  document.getElementById("btnCopyOrderInfo").addEventListener("click", async () => {
-    const orderText = `你好，购买【2026考公教资高频陷阱刷题卡 (${PRODUCT_SLUG})】完整版（${ORDER_CHANNELS.priceText}，含 OPC1. 激活码 + 离线完整解锁包），接收邮箱：`;
-    try {
-      await navigator.clipboard.writeText(orderText);
-      document.getElementById("btnCopyOrderInfo").textContent = "✅ 已复制下单口令";
-    } catch {
-      // Fallback ignored
-    }
+  document.getElementById("btnCopyStudioMail")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const prev = btn.textContent;
+    await navigator.clipboard.writeText("3152557994@qq.com");
+    btn.textContent = "✅ 已复制";
+    setTimeout(() => (btn.textContent = prev), 1500);
   });
 
   window.addEventListener("keydown", (e) => {
-    if (activeMode !== "practice" || !document.getElementById("unlockModal").hidden) return;
+    if (activeMode !== "practice") return;
     const deck = getDeck();
     if (e.key === "ArrowRight" && currentCardPos < deck.length - 1) {
       currentCardPos += 1;
@@ -611,8 +487,8 @@ async function init() {
       const map = { "1": "A", "2": "B", "3": "C", "4": "D" };
       const choice = map[e.key] || e.key.toUpperCase();
       const card = deck[currentCardPos];
-      if (card && !card.locked) {
-        const res = submitAnswer(studyState, { questionId: card.id, choice, unlocked: isUnlocked });
+      if (card) {
+        const res = submitAnswer(studyState, { questionId: card.id, choice, unlocked: true });
         if (res.allowed) {
           studyState = res.state;
           saveStudyState();

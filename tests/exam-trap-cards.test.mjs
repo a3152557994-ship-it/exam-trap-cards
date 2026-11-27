@@ -39,15 +39,19 @@ function signTestToken(payloadObj, privateKey) {
   return `OPC1.${payloadB64}.${toBase64Url(sig)}`;
 }
 
-test("1. Public docs mirror matches src byte-identically and never leaks pre-unlocked flag", () => {
+test("1. Public docs mirror matches src byte-identically and unlocks 100% free without OPC1 paywall", () => {
   const srcText = fs.readFileSync(path.join(ROOT, "src", "trap-cards-engine.mjs"), "utf8");
   const docsText = fs.readFileSync(path.join(ROOT, "docs", "trap-cards-engine.js"), "utf8");
   assert.equal(srcText, docsText);
 
   const publicHtml = fs.readFileSync(path.join(ROOT, "docs", "index.html"), "utf8");
   const publicApp = fs.readFileSync(path.join(ROOT, "docs", "app.js"), "utf8");
-  assert.ok(!publicHtml.includes("__OPC_OFFLINE_UNLOCKED__ = true"), "Public index.html must NOT pre-unlock full bank");
-  assert.ok(!publicApp.includes("__OPC_OFFLINE_UNLOCKED__ = true"), "Public app.js must NOT pre-unlock full bank");
+  assert.ok(!publicHtml.includes("__OPC_OFFLINE_UNLOCKED__ = true"));
+  assert.ok(!publicApp.includes("__OPC_OFFLINE_UNLOCKED__ = true"));
+  assert.ok(publicApp.includes("let isUnlocked = true;"), "app.js must default to 100% free unlocked mode");
+  assert.ok(!publicHtml.includes("OPC1."), "index.html must not contain OPC1. paywall");
+  assert.ok(publicHtml.includes("数创引擎工作室"), "index.html must include studio contact");
+  assert.ok(publicHtml.includes("3152557994@qq.com"), "index.html must include official email");
 });
 
 test("2. Question bank contains exactly 40 authentic questions (10 per module) with rich trap analysis & mnemonics", () => {
